@@ -1,5 +1,6 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { manholeOverviewFlags } from '@/api/manhole-service'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -86,8 +87,12 @@ export function downloadEntries(key: string): void {
 
 export function loadOverview(): OverviewResult {
   const rows = allRows()
+  // 井盖模块已迁移到专属养护域，概览口径以域内统一判定为准，避免与列表对不上。
+  const manholeFlags = manholeOverviewFlags()
   const modules = [...MODULE_BY_KEY.values()].map((meta) => {
-    const entries = rows[meta.key] ?? []
+    if (meta.key === 'manhole') {
+      return { name: meta.name, ...manholeFlags }
+    }    const entries = rows[meta.key] ?? []
     return {
       name: meta.name,
       created: entries.length,
