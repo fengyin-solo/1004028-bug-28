@@ -8,6 +8,20 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+function isLegacyManhole(rows: unknown): boolean {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return false
+  }
+  return rows.some((row) => {
+    if (!row || typeof row !== 'object') {
+      return false
+    }
+    const item = row as Record<string, unknown>
+    // 旧版井盖数据没有阶段字段，且登记的是“井盖设施样例N”占位内容。
+    return !('phase' in item) || String(item['所属道路'] ?? '').includes('井盖设施样例')
+  })
+}
+
 function readStorage(): Record<string, EntryRow[]> {
   const fallback = clone(SEED_ROWS)
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -20,7 +34,13 @@ function readStorage(): Record<string, EntryRow[]> {
   }
   try {
     const parsed = JSON.parse(raw) as Record<string, EntryRow[]>
-    return { ...fallback, ...parsed }
+    const merged = { ...fallback, ...parsed }
+    // 井盖模块上了规则引擎：旧版占位数据与新结构对不上，直接迁回新种子，避免列表/详情错乱。
+    if (isLegacyManhole(parsed.manhole)) {
+      merged.manhole = clone(SEED_ROWS.manhole)
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+    }
+    return merged
   } catch {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fallback))
     return fallback

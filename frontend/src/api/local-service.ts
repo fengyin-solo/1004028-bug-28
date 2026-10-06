@@ -1,6 +1,13 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import {
+  applyForMaintenance,
+  confirmReplacement,
+  deriveManholeRows,
+  resetManholeCycles,
+  startMaintenance,
+} from '@/domain/manhole/service'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -28,13 +35,38 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
-export function runAction(key: string, id: number, action: string): ActionResult {
+export function runAction(
+  key: string,
+  id: number,
+  action: string,
+  payload?: Record<string, string>,
+): ActionResult {
   const meta = moduleMeta(key)
+  const rows = listRows(key)
+
+  // 井盖模块走养护规则引擎：状态由类型/材质/安装日期与现行规则派生，而非直接写死。
+  if (key === 'manhole') {
+    if (action === '申请维护') {
+      return applyForMaintenance(rows, id)
+    }
+    if (action === '开始维护') {
+      return startMaintenance(rows, id)
+    }
+    if (action === '确认更换') {
+      return confirmReplacement(rows, id, {
+        coverType: payload?.coverType ?? '',
+        material: payload?.material ?? '',
+        spec: payload?.spec ?? '',
+        installDate: payload?.installDate ?? '',
+      })
+    }
+    return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
+  }
+
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
   }
-  const rows = listRows(key)
   const index = rows.findIndex((row) => Number(row.id) === id)
   if (index < 0) {
     return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
@@ -58,6 +90,9 @@ export function runAction(key: string, id: number, action: string): ActionResult
 
 export function resetModule(key: string): PageResult {
   resetRows(key)
+  if (key === 'manhole') {
+    resetManholeCycles()
+  }
   return listEntries(key)
 }
 
@@ -88,6 +123,16 @@ export function loadOverview(): OverviewResult {
   const rows = allRows()
   const modules = [...MODULE_BY_KEY.values()].map((meta) => {
     const entries = rows[meta.key] ?? []
+    if (meta.key === 'manhole') {
+      // 井盖的待处理/异常以规则引擎派生结果为准，和列表、详情完全一致。
+      const derived = deriveManholeRows(entries)
+      return {
+        name: meta.name,
+        created: entries.length,
+        pending: derived.filter((row) => row.pending).length,
+        abnormal: derived.filter((row) => row.abnormal).length,
+      }
+    }
     return {
       name: meta.name,
       created: entries.length,
